@@ -15,7 +15,6 @@ class Tournamentdetailscreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            //header dosyası fotoğraf ve üstündeki back butonu
             TournamentHeader(data: tournamentData),
             Padding(
               padding: EdgeInsetsGeometry.all(16.0),
@@ -52,11 +51,14 @@ class Tournamentdetailscreen extends StatelessWidget {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: () {
+                        final Map<String, dynamic> completeData =
+                            Map<String, dynamic>.from(tournamentData);
+
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => TournamentApplicationScreen(
-                              tournamentData: tournamentData,
+                              tournamentData: completeData,
                             ),
                           ),
                         );

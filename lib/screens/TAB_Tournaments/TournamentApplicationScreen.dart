@@ -15,7 +15,9 @@ class TournamentApplicationScreen extends StatefulWidget {
 
 class _TournamentApplicationScreenState
     extends State<TournamentApplicationScreen> {
-  String selectedTeam = "";
+  String selectedTeamName = "";
+  String selectedTeamId = "";
+
   int requiredPlayers = 5;
 
   late final Stream<QuerySnapshot> _teamsStream;
@@ -70,7 +72,9 @@ class _TournamentApplicationScreenState
                   physics: const NeverScrollableScrollPhysics(),
                   itemCount: teams.length,
                   itemBuilder: (context, index) {
-                    var teamData = teams[index].data() as Map<String, dynamic>;
+                    var teamDoc = teams[index];
+                    var teamData = teamDoc.data() as Map<String, dynamic>;
+
                     String teamName = teamData['teamName'] ?? "İsimsiz Takım";
                     List members = teamData['members'] ?? [];
                     String playersText =
@@ -79,10 +83,11 @@ class _TournamentApplicationScreenState
                     return TeamSelectionCard(
                       teamName: teamName,
                       playersCount: playersText,
-                      isSelected: selectedTeam == teamName,
+                      isSelected: selectedTeamId == teamDoc.id,
                       onTap: () {
                         setState(() {
-                          selectedTeam = teamName;
+                          selectedTeamName = teamName;
+                          selectedTeamId = teamDoc.id;
                         });
                       },
                     );
@@ -100,27 +105,23 @@ class _TournamentApplicationScreenState
                 width: double.infinity,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: selectedTeam.isEmpty
+                    backgroundColor: selectedTeamId.isEmpty
                         ? Colors.grey[800]
                         : const Color(0xFFBB86FC),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(6),
                     ),
                   ),
-                  onPressed: selectedTeam.isEmpty
+                  onPressed: selectedTeamId.isEmpty
                       ? null
                       : () async {
-                          // Başvuruyu arka planda veritabanına kaydediyoruz
                           await FirebaseFirestore.instance
                               .collection('applications')
                               .add({
-                                'teamName': selectedTeam,
-                                'tournamentName':
-                                    widget.tournamentData['title'] ??
-                                    'Bilinmeyen Turnuva',
-                                'applicationDate': DateTime.now()
-                                    .toIso8601String(),
-                                'status': 'Beklemede',
+                                'tournamentId': widget.tournamentData['id'],
+                                'teamId': selectedTeamId,
+                                'status': 'Bekliyor',
+                                'appliedAt': FieldValue.serverTimestamp(),
                               });
 
                           if (context.mounted) {
@@ -151,7 +152,7 @@ class _TournamentApplicationScreenState
                                     ],
                                   ),
                                   content: Text(
-                                    '$selectedTeam takımı ile başvurunuz başarıyla alınmıştır. Rakiplerinize acımayın!',
+                                    '$selectedTeamName takımı ile başvurunuz başarıyla alınmıştır. Rakiplerinize acımayın!',
                                     style: TextStyle(
                                       color: Colors.grey[400],
                                       fontSize: 14,
@@ -195,7 +196,7 @@ class _TournamentApplicationScreenState
                   child: Text(
                     'Başvuruyu Tamamla',
                     style: TextStyle(
-                      color: selectedTeam.isEmpty
+                      color: selectedTeamId.isEmpty
                           ? Colors.grey[500]
                           : Colors.white,
                       fontSize: 16,

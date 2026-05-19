@@ -45,14 +45,12 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
                   .collection('tournaments')
                   .snapshots(),
               builder: (context, snapshot) {
-                // Veri yüklenirken
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(
                     child: CircularProgressIndicator(color: Color(0xFFBB86FC)),
                   );
                 }
 
-                // Hata veya boş veri durumu
                 if (snapshot.hasError ||
                     !snapshot.hasData ||
                     snapshot.data!.docs.isEmpty) {
@@ -74,6 +72,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
                     var dbData = docs[index].data() as Map<String, dynamic>;
 
                     final mappedData = {
+                      "id": docs[index].id,
                       "title":
                           dbData['title'] ??
                           dbData['tournamentName'] ??
