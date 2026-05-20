@@ -1,5 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:tournament_app/Logging.dart';
 
 class TeamEditScreen extends StatefulWidget {
   final String teamName;
@@ -20,6 +25,47 @@ class TeamEditScreen extends StatefulWidget {
 }
 
 class _TeamEditScreenState extends State<TeamEditScreen> {
+  bool _isUploadingLogo = false;
+
+  Future<void> _pickAndUploadTeamLogo() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 50,
+    );
+
+    if (image == null) return;
+
+    setState(() => _isUploadingLogo = true);
+
+    try {
+      File file = File(image.path);
+      String filePath = 'team_logos/${widget.teamId}.jpg';
+
+      TaskSnapshot snapshot = await FirebaseStorage.instance
+          .ref(filePath)
+          .putFile(file);
+      String downloadUrl = await snapshot.ref.getDownloadURL();
+
+      await FirebaseFirestore.instance
+          .collection('teams')
+          .doc(widget.teamId)
+          .update({'logo': downloadUrl});
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Logo yüklenemedi.",
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      setState(() => _isUploadingLogo = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot>(
@@ -51,14 +97,26 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
 
         var teamData = snapshot.data!.data() as Map<String, dynamic>;
         String currentTeamName = teamData['teamName'] ?? widget.teamName;
-        String currentLogo = teamData['logo'] ?? widget.logo;
+        String currentLogo = teamData['logo'] ?? "";
         List<dynamic> members = teamData['members'] ?? [];
+
+        String currentUid = FirebaseAuth.instance.currentUser?.uid ?? '';
+        bool isCurrentUserCaptain = false;
+
+        for (var rawMember in members) {
+          if (rawMember is Map && rawMember['uid'] == currentUid) {
+            if (rawMember['role'] == 'KAPTAN') {
+              isCurrentUserCaptain = true;
+            }
+            break;
+          }
+        }
 
         return Scaffold(
           backgroundColor: Colors.black,
           appBar: AppBar(
             title: Text(
-              "$currentTeamName Yönetimi",
+              currentTeamName,
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             backgroundColor: Colors.grey[900],
@@ -81,12 +139,28 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.grey[800],
-                          radius: 24,
-                          child: Text(
-                            currentLogo,
-                            style: const TextStyle(fontSize: 24),
+                        // LOGO: Sadece kaptansa tıklanabilir
+                        GestureDetector(
+                          onTap: isCurrentUserCaptain
+                              ? _pickAndUploadTeamLogo
+                              : null,
+                          child: CircleAvatar(
+                            backgroundColor: Colors.grey[800],
+                            radius: 28,
+                            backgroundImage: currentLogo.isNotEmpty
+                                ? NetworkImage(currentLogo)
+                                : null,
+                            child: _isUploadingLogo
+                                ? const CircularProgressIndicator(
+                                    color: Color(0xFFBB86FC),
+                                    strokeWidth: 2,
+                                  )
+                                : (currentLogo.isEmpty && isCurrentUserCaptain
+                                      ? const Icon(
+                                          Icons.camera_alt,
+                                          color: Colors.grey,
+                                        )
+                                      : null),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -107,27 +181,30 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                                       ),
                                     ),
                                   ),
-                                  InkWell(
-                                    onTap: () => _showEditTeamInfoPopup(
-                                      context,
-                                      currentTeamName,
-                                      currentLogo,
-                                    ),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: const Color(
-                                          0xFFBB86FC,
-                                        ).withAlpha(51),
-                                        borderRadius: BorderRadius.circular(6),
+
+                                  if (isCurrentUserCaptain)
+                                    InkWell(
+                                      onTap: () => _showEditTeamNamePopup(
+                                        context,
+                                        currentTeamName,
                                       ),
-                                      child: const Icon(
-                                        Icons.edit,
-                                        color: Color(0xFFBB86FC),
-                                        size: 16,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(
+                                            0xFFBB86FC,
+                                          ).withAlpha(51),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: const Icon(
+                                          Icons.edit,
+                                          color: Color(0xFFBB86FC),
+                                          size: 16,
+                                        ),
                                       ),
                                     ),
-                                  ),
                                 ],
                               ),
                               const SizedBox(height: 4),
@@ -210,9 +287,21 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                   padding: const EdgeInsets.only(bottom: 20),
                   itemCount: members.length,
                   itemBuilder: (context, index) {
-                    final String memberId = members[index].toString();
+                    var rawMember = members[index];
+                    Map<String, dynamic> memberData = {};
 
-                    bool isCaptain = index == 0;
+                    if (rawMember is String) {
+                      memberData = {'username': rawMember, 'role': 'ÜYE'};
+                    } else if (rawMember is Map) {
+                      memberData = Map<String, dynamic>.from(rawMember);
+                    }
+
+                    final String memberName =
+                        memberData['username'] ??
+                        memberData['name'] ??
+                        'Bilinmiyor';
+                    final String memberRole = memberData['role'] ?? 'ÜYE';
+                    bool isThisMemberCaptain = memberRole == 'KAPTAN';
 
                     return Container(
                       margin: const EdgeInsets.symmetric(
@@ -224,14 +313,14 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                         color: Colors.grey[850],
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: isCaptain
+                          color: isThisMemberCaptain
                               ? const Color(0xFFBB86FC).withAlpha(128)
                               : Colors.transparent,
                         ),
                       ),
                       child: Row(
                         children: [
-                          if (!isCaptain)
+                          if (isCurrentUserCaptain && !isThisMemberCaptain)
                             InkWell(
                               onTap: () async {
                                 await FirebaseFirestore.instance
@@ -239,18 +328,21 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                                     .doc(widget.teamId)
                                     .update({
                                       'members': FieldValue.arrayRemove([
-                                        memberId,
+                                        rawMember,
                                       ]),
                                     });
-
+                                await Logging.log(
+                                  "UYE_ATILDI",
+                                  widget.teamId,
+                                  "$memberName adlı kullanıcı takımdan çıkarıldı.",
+                                );
                                 if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      "$memberId takımdan çıkarıldı!",
+                                      "$memberName takımdan çıkarıldı!",
                                     ),
                                     backgroundColor: Colors.red,
-                                    duration: const Duration(seconds: 2),
                                   ),
                                 );
                               },
@@ -268,13 +360,15 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                                 ),
                               ),
                             ),
-                          if (isCaptain) const SizedBox(width: 44),
+                          if (!isCurrentUserCaptain || isThisMemberCaptain)
+                            const SizedBox(width: 44),
+
                           CircleAvatar(
                             backgroundColor: Colors.grey[700],
                             radius: 22,
                             child: Text(
-                              memberId.isNotEmpty
-                                  ? memberId[0].toUpperCase()
+                              memberName.isNotEmpty
+                                  ? memberName[0].toUpperCase()
                                   : "?",
                               style: const TextStyle(
                                 color: Colors.white,
@@ -288,7 +382,7 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  "Oyuncu: $memberId", //
+                                  memberName,
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 15,
@@ -298,42 +392,38 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
-                                  "Kayıtlı Kullanıcı",
+                                  isThisMemberCaptain
+                                      ? "Takım Kaptanı"
+                                      : "Kayıtlı Kullanıcı",
                                   style: TextStyle(
                                     color: Colors.grey[400],
                                     fontSize: 12,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isCaptain
-                                      ? const Color(0xFFBB86FC).withAlpha(51)
-                                      : Colors.grey[700],
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: Text(
-                                  isCaptain ? "KAPTAN" : "ÜYE", //
-                                  style: TextStyle(
-                                    color: isCaptain
-                                        ? const Color(0xFFBB86FC)
-                                        : Colors.grey[300],
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isThisMemberCaptain
+                                  ? const Color(0xFFBB86FC).withAlpha(51)
+                                  : Colors.grey[700],
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              memberRole,
+                              style: TextStyle(
+                                color: isThisMemberCaptain
+                                    ? const Color(0xFFBB86FC)
+                                    : Colors.grey[300],
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
                               ),
-                            ],
+                            ),
                           ),
                         ],
                       ),
@@ -341,31 +431,33 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
                   },
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFBB86FC),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+              if (isCurrentUserCaptain)
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFBB86FC),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                    onPressed: () => _showInvitePopup(context, members.length),
-                    icon: const Icon(Icons.person_add, color: Colors.white),
-                    label: const Text(
-                      "Üye Davet Et",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                      onPressed: () =>
+                          _showInvitePopup(context, members.length),
+                      icon: const Icon(Icons.person_add, color: Colors.white),
+                      label: const Text(
+                        "Üye Davet Et",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         );
@@ -373,18 +465,10 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
     );
   }
 
-  void _showEditTeamInfoPopup(
-    BuildContext context,
-    String currentName,
-    String currentLogo,
-  ) {
+  void _showEditTeamNamePopup(BuildContext context, String currentName) {
     TextEditingController nameController = TextEditingController(
       text: currentName,
     );
-    TextEditingController logoController = TextEditingController(
-      text: currentLogo,
-    );
-
     showDialog(
       context: context,
       builder: (context) {
@@ -394,46 +478,24 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
             borderRadius: BorderRadius.circular(16),
           ),
           title: const Text(
-            "Takımı Düzenle",
+            "Takım Adını Düzenle",
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: "Takım Adı",
-                  labelStyle: TextStyle(color: Colors.grey[500]),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.grey[700]!),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFFBB86FC)),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
+          content: TextField(
+            controller: nameController,
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: "Takım Adı",
+              labelStyle: TextStyle(color: Colors.grey[500]),
+              enabledBorder: OutlineInputBorder(
+                borderSide: BorderSide(color: Colors.grey[700]!),
+                borderRadius: BorderRadius.circular(8),
               ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: logoController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: "Logo (Emoji veya Yazı)",
-                  labelStyle: TextStyle(color: Colors.grey[500]),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.grey[700]!),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFFBB86FC)),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Color(0xFFBB86FC)),
+                borderRadius: BorderRadius.circular(8),
               ),
-            ],
+            ),
           ),
           actions: [
             TextButton(
@@ -443,19 +505,12 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFBB86FC),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
               ),
               onPressed: () async {
                 await FirebaseFirestore.instance
                     .collection('teams')
                     .doc(widget.teamId)
-                    .update({
-                      'teamName': nameController.text,
-                      'logo': logoController.text,
-                    });
-
+                    .update({'teamName': nameController.text});
                 if (context.mounted) Navigator.pop(context);
               },
               child: const Text(
@@ -480,7 +535,6 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
       return;
     }
 
-    TextEditingController idController = TextEditingController();
     TextEditingController emailController = TextEditingController();
 
     showDialog(
@@ -498,22 +552,9 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: idController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: "Kullanıcı Adı / ID",
-                  labelStyle: TextStyle(color: Colors.grey[500]),
-                  prefixIcon: const Icon(Icons.tag, color: Color(0xFFBB86FC)),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Colors.grey[700]!),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: const BorderSide(color: Color(0xFFBB86FC)),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
+              const Text(
+                "Davet etmek istediğiniz oyuncunun kayıtlı e-posta adresini girin.",
+                style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -543,31 +584,42 @@ class _TeamEditScreenState extends State<TeamEditScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFBB86FC),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
               ),
               onPressed: () async {
-                if (idController.text.isNotEmpty &&
-                    emailController.text.isNotEmpty) {
-                  await FirebaseFirestore.instance
-                      .collection('teams')
-                      .doc(widget.teamId)
-                      .update({
-                        'members': FieldValue.arrayUnion([
-                          {
-                            "name": idController.text,
-                            "email": emailController.text,
-                            "role": "ÜYE",
-                          },
-                        ]),
-                      });
+                if (emailController.text.isNotEmpty) {
+                  var userQuery = await FirebaseFirestore.instance
+                      .collection('users')
+                      .where('email', isEqualTo: emailController.text.trim())
+                      .get();
+
+                  if (userQuery.docs.isEmpty) {
+                    if (context.mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Bu e-posta ile kayıtlı oyuncu bulunamadı!",
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    return;
+                  }
+
+                  var invitedUser = userQuery.docs.first;
+                  await FirebaseFirestore.instance.collection('invites').add({
+                    'teamId': widget.teamId,
+                    'teamName': widget.teamName,
+                    'toUid': invitedUser.id,
+                    'toEmail': emailController.text.trim(),
+                    'status': 'pending',
+                    'createdAt': FieldValue.serverTimestamp(),
+                  });
 
                   if (context.mounted) {
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
-                        content: Text("Oyuncu takıma eklendi!"),
+                        content: Text("Davet başarıyla gönderildi!"),
                         backgroundColor: Colors.green,
                       ),
                     );

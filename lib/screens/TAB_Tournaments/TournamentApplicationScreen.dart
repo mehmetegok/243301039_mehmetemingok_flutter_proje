@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:tournament_app/Logging.dart';
 import 'package:tournament_app/widgets/TournamentSummaryCard.dart';
 import 'package:tournament_app/widgets/TeamSelectionCard.dart';
 
@@ -31,14 +33,22 @@ class _TournamentApplicationScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Turnuva Başvuru'), centerTitle: true),
+      backgroundColor: const Color(0xFF121212),
+      appBar: AppBar(
+        title: const Text(
+          'Turnuva Başvuru',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
+      ),
       body: SingleChildScrollView(
         child: Column(
           children: [
             TournamentSummaryCard(tournamentData: widget.tournamentData),
             const SizedBox(height: 20),
             const Text(
-              'Takım Seçin',
+              'Başvuracak Takımı Seçin',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -65,20 +75,55 @@ class _TournamentApplicationScreenState
                   );
                 }
 
-                var teams = snapshot.data!.docs;
+                String currentUid =
+                    FirebaseAuth.instance.currentUser?.uid ?? "";
+                String requiredGame =
+                    widget.tournamentData['game'] ?? "Counter-Strike 2";
+
+                var eligibleTeams = snapshot.data!.docs.where((doc) {
+                  var teamData = doc.data() as Map<String, dynamic>;
+                  List members = teamData['members'] ?? [];
+                  String teamGame = teamData['game'] ?? "";
+
+                  bool isCaptain = members.any(
+                    (m) =>
+                        m is Map &&
+                        m['uid'] == currentUid &&
+                        m['role'] == 'KAPTAN',
+                  );
+                  bool matchesGame = teamGame == requiredGame;
+
+                  return isCaptain && matchesGame;
+                }).toList();
+
+                if (eligibleTeams.isEmpty) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Text(
+                        "Bu turnuvaya uygun bir takımınız bulunamadı.",
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  );
+                }
 
                 return ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: teams.length,
+                  itemCount: eligibleTeams.length,
                   itemBuilder: (context, index) {
-                    var teamDoc = teams[index];
+                    var teamDoc = eligibleTeams[index];
                     var teamData = teamDoc.data() as Map<String, dynamic>;
 
                     String teamName = teamData['teamName'] ?? "İsimsiz Takım";
+                    String teamGame = teamData['game'] ?? "Bilinmiyor";
                     List members = teamData['members'] ?? [];
                     String playersText =
-                        "${members.length}/$requiredPlayers Oyuncu - CS2";
+                        "${members.length}/$requiredPlayers Oyuncu - $teamGame";
 
                     return TeamSelectionCard(
                       teamName: teamName,
@@ -123,6 +168,11 @@ class _TournamentApplicationScreenState
                                 'status': 'Bekliyor',
                                 'appliedAt': FieldValue.serverTimestamp(),
                               });
+                          await Logging.log(
+                            "TURNUVA_BASVURUSU",
+                            widget.tournamentData['id'],
+                            "$selectedTeamName takımı turnuvaya başvurdu.",
+                          );
 
                           if (context.mounted) {
                             showDialog(

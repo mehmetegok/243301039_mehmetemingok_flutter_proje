@@ -10,22 +10,23 @@ class TournamentsScreen extends StatefulWidget {
 }
 
 class _TournamentsScreenState extends State<TournamentsScreen> {
+  final TextEditingController _searchController = TextEditingController();
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF121212),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.only(
-              //Burada padding ile ana sayfaya eklemeyi düşündüğüm arama çubuğunun kenarlarının
-              left: 16, //çerçeveden ne kadar içte olacağını ayarladım.
-              top: 50,
-              right: 16,
-            ),
+            padding: const EdgeInsets.only(left: 16, top: 50, right: 16),
             child: TextField(
-              //Burada arama çubuğunun arka planı ve genel tasarımını yaptım.
+              controller: _searchController,
+              onChanged: (value) => setState(() {}),
+              style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText: 'Turnuva Ara',
+                hintStyle: const TextStyle(color: Colors.grey),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 filled: true,
                 fillColor: const Color(0xFF1E1E1E),
@@ -36,9 +37,7 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
               ),
             ),
           ),
-
-          SizedBox(height: 5),
-
+          const SizedBox(height: 5),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -62,17 +61,37 @@ class _TournamentsScreenState extends State<TournamentsScreen> {
                   );
                 }
 
-                var docs = snapshot.data!.docs;
+                String searchQuery = _searchController.text.toLowerCase();
+
+                var filteredDocs = snapshot.data!.docs.where((doc) {
+                  var dbData = doc.data() as Map<String, dynamic>;
+                  String title =
+                      (dbData['title'] ??
+                              dbData['tournamentName'] ??
+                              "İsimsiz Turnuva")
+                          .toString()
+                          .toLowerCase();
+                  return title.contains(searchQuery);
+                }).toList();
+
+                if (filteredDocs.isEmpty) {
+                  return const Center(
+                    child: Text(
+                      "Aradığınız kritere uygun turnuva bulunamadı.",
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  );
+                }
 
                 return ListView.builder(
-                  itemCount: docs.length,
+                  itemCount: filteredDocs.length,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   itemBuilder: (context, index) {
-                    // Firebase'den gelen dökümanı alıyoruz
-                    var dbData = docs[index].data() as Map<String, dynamic>;
+                    var dbData =
+                        filteredDocs[index].data() as Map<String, dynamic>;
 
                     final mappedData = {
-                      "id": docs[index].id,
+                      "id": filteredDocs[index].id,
                       "title":
                           dbData['title'] ??
                           dbData['tournamentName'] ??
